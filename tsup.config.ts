@@ -5,4 +5,8 @@ export default defineConfig({
   format: ["cjs", "esm"],
   dts: true,
   clean: true,
+  target: "es2020",
+  splitting: false,
+  sourcemap: true,
+  external: ["typescript"],
 });

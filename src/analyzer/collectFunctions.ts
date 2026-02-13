@@ -1,38 +1,57 @@
 import ts from "typescript";
 
 export interface FunctionNode {
+  id: string;
   name: string;
   file: string;
   node: ts.FunctionLikeDeclaration;
 }
 
+function safeName(node: ts.FunctionLikeDeclaration, sf: ts.SourceFile): string {
+  const anyNode = node as any;
+
+  // Named declarations / methods: function foo() {} / class X { foo() {} }
+  if (anyNode.name && ts.isIdentifier(anyNode.name)) return anyNode.name.text;
+
+  // Methods with string/numeric names: class X { "foo"() {} }
+  if (anyNode.name && (ts.isStringLiteral(anyNode.name) || ts.isNumericLiteral(anyNode.name))) {
+    return String(anyNode.name.text);
+  }
+
+  // const foo = () => {} / const foo = function() {}
+  const p = node.parent;
+  if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
+
+  // obj.foo = function() {}
+  if (p && ts.isBinaryExpression(p) && ts.isPropertyAccessExpression(p.left)) {
+    return p.left.name.text;
+  }
+
+  const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+  return `<anonymous@${line + 1}:${character + 1}>`;
+}
+
 export function collectFunctions(program: ts.Program): FunctionNode[] {
-  const functions: FunctionNode[] = [];
+  const out: FunctionNode[] = [];
 
-  for (const sourceFile of program.getSourceFiles()) {
-    if (sourceFile.isDeclarationFile) continue;
-    if (sourceFile.fileName.includes("node_modules")) continue;
+  for (const sf of program.getSourceFiles()) {
+    if (sf.isDeclarationFile) continue;
+    if (sf.fileName.includes("node_modules")) continue;
 
-    ts.forEachChild(sourceFile, function visit(node) {
+    ts.forEachChild(sf, function visit(n) {
       if (
-        ts.isFunctionDeclaration(node) ||
-        ts.isMethodDeclaration(node) ||
-        ts.isArrowFunction(node) ||
-        ts.isFunctionExpression(node)
+        ts.isFunctionDeclaration(n) ||
+        ts.isMethodDeclaration(n) ||
+        ts.isArrowFunction(n) ||
+        ts.isFunctionExpression(n)
       ) {
-        const name =
-          (node as any).name?.getText() || "<anonymous>";
-
-        functions.push({
-          name,
-          file: sourceFile.fileName,
-          node,
-        });
+        const name = safeName(n, sf);
+        const id = `${sf.fileName}:${n.pos}:${name}`;
+        out.push({ id, name, file: sf.fileName, node: n });
       }
-
-      ts.forEachChild(node, visit);
+      ts.forEachChild(n, visit);
     });
   }
 
-  return functions;
+  return out;
 }
