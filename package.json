@@ -1,6 +1,6 @@
 {
   "name": "callograph",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "TypeScript call graph and side-effect analyzer.",
   "license": "MIT",
   "type": "module",
@@ -8,7 +8,9 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup",
@@ -21,7 +23,7 @@
     "typescript": "^5.9.3"
   },
   "bin": {
-  "callograph": "./dist/cli.cjs"
+    "callograph": "./dist/cli.cjs"
   },
   "repository": {
     "type": "git",
@@ -30,7 +32,5 @@
   "bugs": {
     "url": "https://github.com/<your-username>/callograph/issues"
   },
-  "homepage": "https://github.com/<your-username>/callograph#readme",
-  "files": ["dist", "README.md", "LICENSE"]
-
+  "homepage": "https://github.com/<your-username>/callograph#readme"
 }
