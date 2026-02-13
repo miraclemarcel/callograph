@@ -16,7 +16,19 @@
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {
+    "@types/node": "^25.2.3",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
-  }
+  },
+  "bin": {
+  "callograph": "./dist/cli.cjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<your-username>/callograph.git"
+  },
+  "bugs": {
+    "url": "https://github.com/<your-username>/callograph/issues"
+  },
+  "homepage": "https://github.com/<your-username>/callograph#readme"
 }
