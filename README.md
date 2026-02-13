@@ -1,9 +1,3 @@
-Here is a **senior-level README** for `callograph` v0.1.0 — written as if this is a serious static analysis tool.
-
-You can paste this directly into your `README.md`.
-
----
-
 # Callograph
 
 **Callograph** is a static analysis tool for TypeScript projects that builds a program-level call graph and detects side effects, impurity propagation, and unsafe async behavior.
