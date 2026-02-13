@@ -30,5 +30,7 @@
   "bugs": {
     "url": "https://github.com/<your-username>/callograph/issues"
   },
-  "homepage": "https://github.com/<your-username>/callograph#readme"
+  "homepage": "https://github.com/<your-username>/callograph#readme",
+  "files": ["dist", "README.md", "LICENSE"]
+
 }
