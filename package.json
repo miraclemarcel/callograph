@@ -27,10 +27,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<your-username>/callograph.git"
+    "url": "git+https://github.com/miraclemarcel/callograph.git"
   },
   "bugs": {
-    "url": "https://github.com/<your-username>/callograph/issues"
+    "url": "https://github.com/miraclemarcel/callograph/issues"
   },
-  "homepage": "https://github.com/<your-username>/callograph#readme"
+  "homepage": "https://github.com/miraclemarcel/callograph#readme"
 }
