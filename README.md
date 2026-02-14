@@ -267,7 +267,7 @@ Contributions are welcome.
 * Add tests for new analysis rules.
 
 ---
-
+ 
 ## Vision
 
 Callograph aims to become:
