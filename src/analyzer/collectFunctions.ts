@@ -38,19 +38,24 @@ export function collectFunctions(program: ts.Program): FunctionNode[] {
     if (sf.isDeclarationFile) continue;
     if (sf.fileName.includes("node_modules")) continue;
 
-    ts.forEachChild(sf, function visit(n) {
-      if (
-        ts.isFunctionDeclaration(n) ||
-        ts.isMethodDeclaration(n) ||
-        ts.isArrowFunction(n) ||
-        ts.isFunctionExpression(n)
-      ) {
-        const name = safeName(n, sf);
-        const id = `${sf.fileName}:${n.pos}:${name}`;
-        out.push({ id, name, file: sf.fileName, node: n });
-      }
-      ts.forEachChild(n, visit);
-    });
+   ts.forEachChild(sf, function visit(n) {
+    const isNamedFunctionDecl = ts.isFunctionDeclaration(n) && !!n.name;
+    const isMethod = ts.isMethodDeclaration(n);
+
+    const isVarAssigned =
+      (ts.isArrowFunction(n) || ts.isFunctionExpression(n)) &&
+      ts.isVariableDeclaration(n.parent) &&
+      ts.isIdentifier(n.parent.name);
+
+    if (isNamedFunctionDecl || isMethod || isVarAssigned) {
+      const name = safeName(n, sf);
+      const id = `${sf.fileName}:${n.pos}:${name}`;
+      out.push({ id, name, file: sf.fileName, node: n });
+    }
+
+    ts.forEachChild(n, visit);
+  });
+
   }
 
   return out;
