@@ -1,81 +1,16 @@
 import ts from "typescript";
 import { FunctionNode, PurityResult } from "../../libs/types";
-
-const GLOBAL_OBJECTS = new Set([
-  "window",
-  "document",
-  "global",
-  "process",
-  "localStorage",
-  "sessionStorage",
-]);
-
-const MUTATING_ARRAY_METHODS = new Set([
-  "push",
-  "pop",
-  "splice",
-  "shift",
-  "unshift",
-  "sort",
-  "reverse",
-  "copyWithin",
-  "fill",
-]);
-
-function isInside(node: ts.Node, container: ts.Node) {
-  return node.pos >= container.pos && node.end <= container.end;
-}
-
-function isWriteOperator(kind: ts.SyntaxKind) {
-  return (
-    kind === ts.SyntaxKind.EqualsToken ||
-    kind === ts.SyntaxKind.PlusEqualsToken ||
-    kind === ts.SyntaxKind.MinusEqualsToken ||
-    kind === ts.SyntaxKind.AsteriskEqualsToken ||
-    kind === ts.SyntaxKind.SlashEqualsToken ||
-    kind === ts.SyntaxKind.PercentEqualsToken ||
-    kind === ts.SyntaxKind.AmpersandEqualsToken ||
-    kind === ts.SyntaxKind.BarEqualsToken ||
-    kind === ts.SyntaxKind.CaretEqualsToken ||
-    kind === ts.SyntaxKind.LessThanLessThanEqualsToken ||
-    kind === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken ||
-    kind === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken
-  );
-}
-
-function rootIdentifier(expr: ts.Expression): ts.Identifier | null {
-  if (ts.isIdentifier(expr)) return expr;
-  if (ts.isPropertyAccessExpression(expr)) return rootIdentifier(expr.expression);
-  if (ts.isElementAccessExpression(expr)) return rootIdentifier(expr.expression);
-  if (ts.isParenthesizedExpression(expr)) return rootIdentifier(expr.expression);
-  return null;
-}
-
-function isPromiseLike(type: ts.Type): boolean {
-  if (!type) return false;
-
-  const symbol = type.getSymbol();
-  if (!symbol) return false;
-
-  const name = symbol.getName();
-
-  // Direct Promise
-  if (name === "Promise") return true;
-
-  // Thenable detection
-  const thenProp = type.getProperty("then");
-  return !!thenProp;
-}
-
-
-function isAwaited(node: ts.CallExpression) {
-  return ts.isAwaitExpression(node.parent);
-}
-
-function isHandledWithThen(node: ts.CallExpression) {
-  if (!ts.isPropertyAccessExpression(node.parent)) return false;
-  return node.parent.name.text === "then" || node.parent.name.text === "catch";
-}
+import { GLOBAL_OBJECTS, MUTATING_ARRAY_METHODS } from "./helpers/globals";
+import { isInside, rootIdentifier, isWriteOperator } from "./helpers/ast";
+import {
+  isPromiseLike,
+  isAwaited,
+  isReturned,
+  isHandledWithThen,
+  isAsyncForEach,
+  isAsyncEventListener,
+  isPromiseAll,
+} from "./helpers/async";
 
 export function analyzePurity(
   program: ts.Program,
@@ -102,44 +37,43 @@ export function analyzePurity(
     };
 
     let containsAwait = false;
+    let hasTryCatch = false;
+
     const isAsyncFunction =
-      (fn.node.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) ??
-      false;
+      fn.node.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
 
     function visit(node: ts.Node): void {
-      /* ---------------------------------------
-         PARAMETER + OUTER SCOPE WRITES
-      ----------------------------------------*/
-      if (ts.isBinaryExpression(node)) {
-        if (isWriteOperator(node.operatorToken.kind)) {
-          const left = node.left as ts.Expression;
-          const root = rootIdentifier(left);
+      /* ---------------------------
+         WRITE DETECTION
+      ----------------------------*/
+      if (ts.isBinaryExpression(node) && isWriteOperator(node.operatorToken.kind)) {
+        const left = node.left as ts.Expression;
+        const root = rootIdentifier(left);
 
-          if (root && paramNames.has(root.text)) {
-            mark(`Mutates parameter \`${root.text}\``);
-          }
+        if (root && paramNames.has(root.text)) {
+          mark(`Mutates parameter \`${root.text}\``);
+        }
 
-          if (ts.isIdentifier(left)) {
-            const sym = checker.getSymbolAtLocation(left);
-            const decls = sym?.getDeclarations() ?? [];
-            const declaredInside = decls.some((d) => isInside(d, fn.node));
-            if (sym && decls.length > 0 && !declaredInside) {
-              mark(`Writes to outer scope \`${left.text}\``);
-            }
+        if (ts.isIdentifier(left)) {
+          const sym = checker.getSymbolAtLocation(left);
+          const decls = sym?.getDeclarations() ?? [];
+          const declaredInside = decls.some(d => isInside(d, fn.node));
+          if (sym && decls.length > 0 && !declaredInside) {
+            mark(`Writes to outer scope \`${left.text}\``);
           }
+        }
 
-          if (
-            ts.isPropertyAccessExpression(left) &&
-            left.expression.kind === ts.SyntaxKind.ThisKeyword
-          ) {
-            mark(`Mutates \`this.${left.name.text}\``);
-          }
+        if (
+          ts.isPropertyAccessExpression(left) &&
+          left.expression.kind === ts.SyntaxKind.ThisKeyword
+        ) {
+          mark(`Mutates \`this.${left.name.text}\``);
         }
       }
 
-      /* ---------------------------------------
-         ARRAY MUTATION ON PARAMS
-      ----------------------------------------*/
+      /* ---------------------------
+         ARRAY PARAM MUTATION
+      ----------------------------*/
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
         const method = node.expression.name.text;
         const root = rootIdentifier(node.expression.expression);
@@ -149,78 +83,96 @@ export function analyzePurity(
         }
       }
 
-      /* ---------------------------------------
-         GLOBAL ACCESS DETECTION (SOLID)
-      ----------------------------------------*/
+      /* ---------------------------
+         GLOBAL ACCESS
+      ----------------------------*/
       if (ts.isIdentifier(node)) {
-        const symbol = checker.getSymbolAtLocation(node);
-        if (!symbol) return;
-
-        const name = symbol.getName();
-
-        if (GLOBAL_OBJECTS.has(name)) {
-          mark(`Accesses global \`${name}\``);
+        const sym = checker.getSymbolAtLocation(node);
+        if (sym && GLOBAL_OBJECTS.has(sym.getName())) {
+          mark(`Accesses global \`${sym.getName()}\``);
         }
       }
 
       if (ts.isPropertyAccessExpression(node)) {
-        const left = node.expression;
-        const leftRoot = rootIdentifier(left);
+        const root = rootIdentifier(node.expression);
 
-        if (leftRoot?.text === "process" && node.name.text === "env") {
+        if (root?.text === "process" && node.name.text === "env") {
           mark("Accesses `process.env` (non-deterministic)");
         }
 
-        if (leftRoot?.text === "console") {
+        if (root?.text === "console") {
           mark("Writes to console");
         }
       }
 
-    // CALL EXPRESSIONS
-    if (ts.isCallExpression(node)) {
-    const type = checker.getTypeAtLocation(node);
-    const expr = node.expression;
+      /* ---------------------------
+         CALL EXPRESSIONS
+      ----------------------------*/
+      if (ts.isCallExpression(node)) {
+        const type = checker.getTypeAtLocation(node);
+        const expr = node.expression;
 
-    // Date.now()
-    if (
-        ts.isPropertyAccessExpression(expr) &&
-        ts.isIdentifier(expr.expression) &&
-        expr.expression.text === "Date" &&
-        expr.name.text === "now"
-    ) {
-        mark("Calls Date.now() (non-deterministic)");
-    }
-
-    // Math.random()
-    if (
-        ts.isPropertyAccessExpression(expr) &&
-        ts.isIdentifier(expr.expression) &&
-        expr.expression.text === "Math" &&
-        expr.name.text === "random"
-    ) {
-        mark("Calls Math.random() (non-deterministic)");
-    }
-
-    // Async safety
-    if (isPromiseLike(type)) {
-        if (!isAwaited(node) && !isHandledWithThen(node)) {
-        mark("Unawaited Promise (fire-and-forget async)");
+        // Non-deterministic
+        if (
+          ts.isPropertyAccessExpression(expr) &&
+          ts.isIdentifier(expr.expression) &&
+          expr.expression.text === "Date" &&
+          expr.name.text === "now"
+        ) {
+          mark("Calls Date.now() (non-deterministic)");
         }
-    }
-    }
 
-    // NEW EXPRESSIONS
-    if (ts.isNewExpression(node)) {
-    if (ts.isIdentifier(node.expression)) {
-        if (node.expression.text === "Date") {
-        mark("Instantiates Date (non-deterministic)");
+        if (
+          ts.isPropertyAccessExpression(expr) &&
+          ts.isIdentifier(expr.expression) &&
+          expr.expression.text === "Math" &&
+          expr.name.text === "random"
+        ) {
+          mark("Calls Math.random() (non-deterministic)");
         }
-    }
-    }
 
+        // Async rules
+        if (isPromiseLike(type, checker)) {
+          if (!isAwaited(node) && !isReturned(node) && !isHandledWithThen(node)) {
+            mark("Floating Promise (result ignored)");
+          }
+        }
 
+        if (isPromiseAll(node) && !isAwaited(node) && !isReturned(node)) {
+          mark("Unawaited Promise.all()");
+        }
+
+        if (isAsyncForEach(node)) {
+          mark("Async callback inside forEach (not awaited)");
+        }
+
+        if (isAsyncEventListener(node)) {
+          mark("Async event listener without error boundary");
+        }
+      }
+
+      /* ---------------------------
+         NEW EXPRESSIONS
+      ----------------------------*/
+      if (ts.isNewExpression(node)) {
+        if (ts.isIdentifier(node.expression) && node.expression.text === "Date") {
+          mark("Instantiates Date (non-deterministic)");
+        }
+      }
+
+      /* ---------------------------
+         AWAIT + ERROR HANDLING
+      ----------------------------*/
       if (ts.isAwaitExpression(node)) {
         containsAwait = true;
+      }
+
+      if (ts.isTryStatement(node) && node.catchClause) {
+        hasTryCatch = true;
+      }
+
+      if (ts.isCatchClause(node) && node.block.statements.length === 0) {
+        mark("Empty catch block (error swallowed)");
       }
 
       ts.forEachChild(node, visit);
@@ -230,6 +182,10 @@ export function analyzePurity(
 
     if (isAsyncFunction && !containsAwait) {
       mark("Async function without await");
+    }
+
+    if (isAsyncFunction && containsAwait && !hasTryCatch) {
+      mark("Async function without error handling (no try/catch)");
     }
 
     results.push({
