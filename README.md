@@ -21,7 +21,7 @@ Callograph provides structural visibility into function relationships and propag
 
 ---
 
-## Core Capabilities (v0.0.2)
+## Core Capabilities (v0.0.3)
 
 ### 1. Call Graph Construction
 
@@ -231,7 +231,7 @@ It prioritizes:
 
 ---
 
-## Limitations (v0.0.2)
+## Limitations (v0.0.3)
 
 * Dynamic runtime dispatch cannot always be resolved.
 * Higher-order functions are partially supported.
