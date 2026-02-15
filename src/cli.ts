@@ -1,23 +1,33 @@
 #!/usr/bin/env node
+
 import { createTsProgram } from "./analyzer/createProgram";
 import { collectFunctions } from "./analyzer/collectFunctions";
 import { buildCallGraph } from "./analyzer/buildCallGraph";
 import { analyzePurity } from "./analyzer/purity";
 import { propagateImpurity } from "./analyzer/propagateImpurity";
 
-const command = process.argv[2];
+const args = process.argv.slice(2);
+const command = args[0];
 
 if (command !== "analyze") {
-  console.log("Usage: callograph analyze");
+  console.log("Usage: callograph analyze [tsconfigPath] [--fail-on-impure]");
   process.exit(1);
 }
 
-const program = createTsProgram("tsconfig.json");
+const configPath = args[1] && !args[1].startsWith("--")
+  ? args[1]
+  : "tsconfig.json";
+
+const failOnImpure = args.includes("--fail-on-impure");
+
+const program = createTsProgram(configPath);
 const functions = collectFunctions(program);
 const graph = buildCallGraph(program, functions);
 
 let purity = analyzePurity(program, functions);
 purity = propagateImpurity(graph, purity);
+
+const functionMap = new Map(functions.map(f => [f.id, f]));
 
 /* ------------------------------
    CALL GRAPH
@@ -27,11 +37,11 @@ console.log("\nCall Graph:\n");
 let edgeCount = 0;
 
 for (const [callerId, callees] of graph.entries()) {
-  const caller = functions.find(f => f.id === callerId);
+  const caller = functionMap.get(callerId);
   const callerName = caller ? caller.name : callerId;
 
   for (const calleeId of callees) {
-    const callee = functions.find(f => f.id === calleeId);
+    const callee = functionMap.get(calleeId);
     const calleeName = callee ? callee.name : calleeId;
 
     console.log(`${callerName} → ${calleeName}`);
@@ -65,4 +75,8 @@ if (impure.length === 0) {
     }
     console.log("");
   }
+}
+
+if (failOnImpure && impure.length > 0) {
+  process.exit(1);
 }
