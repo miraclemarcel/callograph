@@ -14,13 +14,9 @@ export default defineConfig([
   {
     entry: ["src/cli.ts"],
     format: ["cjs"],
-    target: "es2020",
+    platform: "node",
+    target: "node20",
     splitting: false,
     sourcemap: true,
-    shims: false,
-    clean: false,
-    banner: {
-      js: "#!/usr/bin/env node",
-    },
-  },
+  }
 ]);
