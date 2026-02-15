@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { createTsProgram } from "./analyzer/createProgram";
 import { collectFunctions } from "./analyzer/collectFunctions";
 import { buildCallGraph } from "./analyzer/buildCallGraph";

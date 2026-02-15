@@ -7,7 +7,7 @@
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": [ 
+  "files": [
     "dist",
     "README.md",
     "LICENSE"
@@ -23,7 +23,7 @@
     "typescript": "^5.9.3"
   },
   "bin": {
-    "callograph": "./dist/cli.cjs"
+    "callograph": "dist/cli.cjs"
   },
   "repository": {
     "type": "git",
