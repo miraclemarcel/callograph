@@ -2,7 +2,7 @@
 
 **Callograph** is a static analysis tool for TypeScript projects that builds a program-level call graph and detects side effects, impurity propagation, and unsafe async behavior.
 
-It is designed for engineers who want deeper insight into how code behaves — beyond lint rules — by analyzing symbol resolution and cross-file call relationships using the TypeScript Compiler API.
+It is designed for engineers who want deeper insight into how code behaves beyond lint rules, by analyzing symbol resolution and cross-file call relationships using the TypeScript Compiler API.
 
 ---
 
