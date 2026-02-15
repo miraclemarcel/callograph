@@ -39,7 +39,7 @@ export function collectFunctions(program: ts.Program): FunctionNode[] {
       const isNamedFunctionDecl = ts.isFunctionDeclaration(n) && !!n.name;
       const isMethod = ts.isMethodDeclaration(n);
 
-      const p = n.parent; // ✅ guard parent
+      const p = n.parent; //guard parent
       const isVarAssigned =
         (ts.isArrowFunction(n) || ts.isFunctionExpression(n)) &&
         !!p &&
