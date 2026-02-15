@@ -1,26 +1,13 @@
 import ts from "typescript";
-import { FunctionNode } from "../../libs/types";
-import { PurityResult } from "../../libs/types";
+import { FunctionNode, PurityResult } from "../../libs/types";
 
-
-const GLOBALS = new Set([
+const GLOBAL_OBJECTS = new Set([
   "window",
   "document",
   "global",
   "process",
   "localStorage",
   "sessionStorage",
-]);
-
-const KNOWN_IMPURE_CALLS = new Set([
-  "Date.now",
-  "Math.random",
-  "console.log",
-  "console.error",
-  "console.warn",
-  "fetch",
-  "setTimeout",
-  "setInterval",
 ]);
 
 const MUTATING_ARRAY_METHODS = new Set([
@@ -37,26 +24,6 @@ const MUTATING_ARRAY_METHODS = new Set([
 
 function isInside(node: ts.Node, container: ts.Node) {
   return node.pos >= container.pos && node.end <= container.end;
-}
-
-function rootIdentifier(expr: ts.Expression): ts.Identifier | null {
-  if (ts.isIdentifier(expr)) return expr;
-  if (ts.isPropertyAccessExpression(expr)) return rootIdentifier(expr.expression);
-  if (ts.isElementAccessExpression(expr)) return rootIdentifier(expr.expression);
-  if (ts.isParenthesizedExpression(expr)) return rootIdentifier(expr.expression);
-  return null;
-}
-
-function getCallFullName(expr: ts.Expression): string | null {
-  // Date.now, Math.random, console.log
-  if (ts.isPropertyAccessExpression(expr)) {
-    const left = expr.expression;
-    const right = expr.name;
-    if (ts.isIdentifier(left)) return `${left.text}.${right.text}`;
-    return null;
-  }
-  if (ts.isIdentifier(expr)) return expr.text;
-  return null;
 }
 
 function isWriteOperator(kind: ts.SyntaxKind) {
@@ -76,6 +43,40 @@ function isWriteOperator(kind: ts.SyntaxKind) {
   );
 }
 
+function rootIdentifier(expr: ts.Expression): ts.Identifier | null {
+  if (ts.isIdentifier(expr)) return expr;
+  if (ts.isPropertyAccessExpression(expr)) return rootIdentifier(expr.expression);
+  if (ts.isElementAccessExpression(expr)) return rootIdentifier(expr.expression);
+  if (ts.isParenthesizedExpression(expr)) return rootIdentifier(expr.expression);
+  return null;
+}
+
+function isPromiseLike(type: ts.Type): boolean {
+  if (!type) return false;
+
+  const symbol = type.getSymbol();
+  if (!symbol) return false;
+
+  const name = symbol.getName();
+
+  // Direct Promise
+  if (name === "Promise") return true;
+
+  // Thenable detection
+  const thenProp = type.getProperty("then");
+  return !!thenProp;
+}
+
+
+function isAwaited(node: ts.CallExpression) {
+  return ts.isAwaitExpression(node.parent);
+}
+
+function isHandledWithThen(node: ts.CallExpression) {
+  if (!ts.isPropertyAccessExpression(node.parent)) return false;
+  return node.parent.name.text === "then" || node.parent.name.text === "catch";
+}
+
 export function analyzePurity(
   program: ts.Program,
   functions: FunctionNode[]
@@ -90,9 +91,8 @@ export function analyzePurity(
     );
 
     const reasons: string[] = [];
-
-    // collect parameter names
     const paramNames = new Set<string>();
+
     for (const p of fn.node.parameters) {
       if (ts.isIdentifier(p.name)) paramNames.add(p.name.text);
     }
@@ -101,64 +101,136 @@ export function analyzePurity(
       if (!reasons.includes(reason)) reasons.push(reason);
     };
 
-    ts.forEachChild(fn.node, function visit(node) {
-      // 1) Parameter mutation + outer-scope writes
-      if (ts.isBinaryExpression(node)) {
-        const isWrite = isWriteOperator(node.operatorToken.kind);
+    let containsAwait = false;
+    const isAsyncFunction =
+      (fn.node.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) ??
+      false;
 
-        if (isWrite) {
-          // Parameter mutation (direct or deep): param =, param.x =, param[0] =
-          const root = rootIdentifier(node.left as ts.Expression);
+    function visit(node: ts.Node): void {
+      /* ---------------------------------------
+         PARAMETER + OUTER SCOPE WRITES
+      ----------------------------------------*/
+      if (ts.isBinaryExpression(node)) {
+        if (isWriteOperator(node.operatorToken.kind)) {
+          const left = node.left as ts.Expression;
+          const root = rootIdentifier(left);
+
           if (root && paramNames.has(root.text)) {
             mark(`Mutates parameter \`${root.text}\``);
           }
 
-          // Outer-scope writes: identifier assigned but declared outside this function
-          if (ts.isIdentifier(node.left)) {
-            const sym = checker.getSymbolAtLocation(node.left);
-            const decls = sym?.getDeclarations?.() ?? [];
+          if (ts.isIdentifier(left)) {
+            const sym = checker.getSymbolAtLocation(left);
+            const decls = sym?.getDeclarations() ?? [];
             const declaredInside = decls.some((d) => isInside(d, fn.node));
             if (sym && decls.length > 0 && !declaredInside) {
-              mark(`Writes to outer scope \`${node.left.text}\``);
+              mark(`Writes to outer scope \`${left.text}\``);
             }
           }
 
-          // this.x = ...
           if (
-            ts.isPropertyAccessExpression(node.left) &&
-            node.left.expression.kind === ts.SyntaxKind.ThisKeyword
+            ts.isPropertyAccessExpression(left) &&
+            left.expression.kind === ts.SyntaxKind.ThisKeyword
           ) {
-            mark(`Mutates \`this.${node.left.name.text}\``);
+            mark(`Mutates \`this.${left.name.text}\``);
           }
         }
       }
 
-      // 1b) Array mutation on parameters: param.push(...)
+      /* ---------------------------------------
+         ARRAY MUTATION ON PARAMS
+      ----------------------------------------*/
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-        const recv = node.expression.expression;
         const method = node.expression.name.text;
-        const root = rootIdentifier(recv);
+        const root = rootIdentifier(node.expression.expression);
 
         if (root && paramNames.has(root.text) && MUTATING_ARRAY_METHODS.has(method)) {
           mark(`Mutates parameter \`${root.text}\` via \`${method}()\``);
         }
       }
 
-      // 4) Accessing global state (basic)
-      if (ts.isIdentifier(node) && GLOBALS.has(node.text)) {
-        mark(`Accesses global \`${node.text}\``);
-      }
+      /* ---------------------------------------
+         GLOBAL ACCESS DETECTION (SOLID)
+      ----------------------------------------*/
+      if (ts.isIdentifier(node)) {
+        const symbol = checker.getSymbolAtLocation(node);
+        if (!symbol) return;
 
-      // 5) Calling known-impure functions (basic list)
-      if (ts.isCallExpression(node)) {
-        const full = getCallFullName(node.expression);
-        if (full && KNOWN_IMPURE_CALLS.has(full)) {
-          mark(`Calls known-impure \`${full}()\``);
+        const name = symbol.getName();
+
+        if (GLOBAL_OBJECTS.has(name)) {
+          mark(`Accesses global \`${name}\``);
         }
       }
 
+      if (ts.isPropertyAccessExpression(node)) {
+        const left = node.expression;
+        const leftRoot = rootIdentifier(left);
+
+        if (leftRoot?.text === "process" && node.name.text === "env") {
+          mark("Accesses `process.env` (non-deterministic)");
+        }
+
+        if (leftRoot?.text === "console") {
+          mark("Writes to console");
+        }
+      }
+
+    // CALL EXPRESSIONS
+    if (ts.isCallExpression(node)) {
+    const type = checker.getTypeAtLocation(node);
+    const expr = node.expression;
+
+    // Date.now()
+    if (
+        ts.isPropertyAccessExpression(expr) &&
+        ts.isIdentifier(expr.expression) &&
+        expr.expression.text === "Date" &&
+        expr.name.text === "now"
+    ) {
+        mark("Calls Date.now() (non-deterministic)");
+    }
+
+    // Math.random()
+    if (
+        ts.isPropertyAccessExpression(expr) &&
+        ts.isIdentifier(expr.expression) &&
+        expr.expression.text === "Math" &&
+        expr.name.text === "random"
+    ) {
+        mark("Calls Math.random() (non-deterministic)");
+    }
+
+    // Async safety
+    if (isPromiseLike(type)) {
+        if (!isAwaited(node) && !isHandledWithThen(node)) {
+        mark("Unawaited Promise (fire-and-forget async)");
+        }
+    }
+    }
+
+    // NEW EXPRESSIONS
+    if (ts.isNewExpression(node)) {
+    if (ts.isIdentifier(node.expression)) {
+        if (node.expression.text === "Date") {
+        mark("Instantiates Date (non-deterministic)");
+        }
+    }
+    }
+
+
+      if (ts.isAwaitExpression(node)) {
+        containsAwait = true;
+      }
+
       ts.forEachChild(node, visit);
-    });
+    }
+
+    visit(fn.node);
+
+    if (isAsyncFunction && !containsAwait) {
+      mark("Async function without await");
+    }
 
     results.push({
       id: fn.id,
