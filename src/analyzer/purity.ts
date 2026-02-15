@@ -2,7 +2,7 @@ import ts from "typescript";
 import { FunctionNode, PurityResult } from "../../libs/types";
 import { GLOBAL_OBJECTS, MUTATING_ARRAY_METHODS } from "./helpers/globals";
 import { isInside, rootIdentifier, isWriteOperator } from "./helpers/ast";
-import {
+import { 
   isPromiseLike,
   isAwaited,
   isReturned,
