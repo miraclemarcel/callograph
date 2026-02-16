@@ -1,5 +1,5 @@
 import { CallGraph } from "../core/buildCallGraph";
-import { AsyncResult, AsyncIssue } from "../../../libs/types";
+import { AsyncResult } from "../../../libs/types";
 
 export function propagateAsyncReturns(
   graph: CallGraph,

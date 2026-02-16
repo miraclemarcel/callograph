@@ -1,40 +1,49 @@
+
+---
+
 # Callograph
 
-**Callograph** is a static analysis tool for TypeScript projects that builds a program-level call graph and detects side effects, impurity propagation, and unsafe async behavior.
+**Callograph** is a structural static analysis engine for TypeScript that builds a full program-level call graph and performs interprocedural purity and async safety analysis.
 
-It is designed for engineers who want deeper insight into how code behaves beyond lint rules, by analyzing symbol resolution and cross-file call relationships using the TypeScript Compiler API.
+It goes beyond lint rules by analyzing symbol resolution, cross-file relationships, and effect propagation using the TypeScript Compiler API.
 
----
-
-## Why Callograph?
-
-Modern TypeScript codebases suffer from:
-
-* Hidden side effects
-* Implicit mutation
-* Unintended global state access
-* Async misuse
-* Impure utilities leaking into shared modules
-* Lack of deterministic boundaries
-
-Callograph provides structural visibility into function relationships and propagates impurity across the call graph to surface real architectural risks.
+Callograph is built for engineers who want architectural clarity — not stylistic warnings.
 
 ---
 
-## Core Capabilities (v0.0.8)
+## 🚀 What Callograph Does
 
-### 1. Call Graph Construction
+Callograph analyzes your entire TypeScript program and answers questions like:
 
-Builds a full program-level call graph from your `tsconfig.json`.
+* Which functions call which?
+* Where do side effects originate?
+* How does impurity propagate?
+* Are promises safely handled?
+* Are async boundaries enforced?
+* Are errors swallowed?
+* Are async effects escaping function boundaries?
 
-It identifies:
+It provides structural reasoning about your system.
+
+---
+
+# Core Capabilities (v0.0.9)
+
+---
+
+## 1. Program-Level Call Graph Construction
+
+Callograph builds a complete call graph from your `tsconfig.json`.
+
+It detects:
 
 * Function → function relationships
 * Cross-file calls
-* Imported symbol calls
-* Method calls (where statically resolvable)
+* Imported symbol resolution
+* Method calls (when statically resolvable)
+* Interprocedural call edges
 
-Example output:
+Example:
 
 ```
 Call Graph:
@@ -44,38 +53,64 @@ applyDiscount → fetchTaxRate
 fetchTaxRate → Date.now
 ```
 
+This graph becomes the foundation for structural effect analysis.
+
 ---
 
-### 2. Function Purity Detection
+## 2. Function Purity Analysis
 
-Callograph analyzes whether a function is:
+Callograph determines whether a function is pure or impure based on structural rules.
 
-* Mutating its parameters
-* Writing to outer scope variables
-* Accessing global state
-* Calling impure functions
+It detects:
+
+### Parameter Mutation
+
+* Direct reassignment
+* Deep property mutation
+* Array mutator calls (`push`, `splice`, etc.)
 
 Example:
 
 ```
-src/utils/calc.ts:42
-Function: calculateTotal
-Status: ❌ Impure
-
-Reasons:
-  - Mutates parameter `items`
-  - Calls impure function `fetchTaxRate`
+❌ Mutates parameter `items`
 ```
 
 ---
 
-### 3. Impurity Propagation
+### Outer Scope Writes
+
+Detects writes to variables declared outside the function.
+
+```
+❌ Writes to outer scope `cache`
+```
+
+---
+
+### Global State Access
+
+Flags access to:
+
+* `process`
+* `process.env`
+* `window`
+* `global`
+* `document`
+* Console writes
+* `Date.now()`
+* `Math.random()`
+
+These are marked as non-deterministic or impure operations.
+
+---
+
+## 3. Impurity Propagation (Interprocedural)
 
 If:
 
 ```
 A → calls B
-B → impure
+B is impure
 ```
 
 Then:
@@ -84,194 +119,314 @@ Then:
 A becomes impure
 ```
 
-This propagation makes Callograph significantly more powerful than simple AST pattern scanning.
+Callograph propagates impurity across the call graph using reverse-graph traversal and fixed-point propagation.
 
-It reasons about effect chains.
-
----
-
-### 4. Global State & Non-Determinism Detection
-
-Flags usage of:
-
-* `process.env`
-* `Date.now()`
-* `Math.random()`
-* `global`
-* `window`
-* Console writes (optional strict mode)
-
-Useful for teams enforcing deterministic or pure-core architectures.
+This makes impurity structural, not local.
 
 ---
 
-### 5. Parameter Mutation Detection
+## 4. Enterprise Async Safety Engine
 
-Detects:
+Callograph includes a dedicated async analysis engine, separate from purity.
 
-* Direct reassignment
-* Deep property mutation
-* Array mutation (`push`, `splice`, etc.)
-
-Example:
-
-```
-❌ Parameter mutation detected:
-updateUser(user) → user.name = "new"
-```
+It performs structural async inference.
 
 ---
 
-### 6. Async Safety Checks
+### Floating Promise Detection
 
 Flags:
 
 * Unawaited promises
 * Fire-and-forget async calls
-* Async functions lacking error handling (basic detection)
+* Promises ignored inside expressions
+* Promises ignored inside loops (loop-aware escalation)
+
+Example:
+
+```
+❌ Floating promise
+⚠️ Floating promise inside loop
+```
 
 ---
 
-### 7. CI Integration
+### Promise.all Structural Analysis
 
-Callograph can fail CI if impure functions are detected.
+Detects:
+
+* Unawaited `Promise.all`
+* Promise arrays containing unhandled async calls
+* Deep inspection of array elements
+
+---
+
+### Async Callback Detection
+
+Flags async callbacks in:
+
+* `forEach`
+* `map`
+* `filter`
+* `reduce`
+* `addEventListener`
+
+Example:
+
+```
+⚠️ Async callback inside array method
+```
+
+---
+
+### Error Swallowing Detection
+
+Detects:
+
+* Empty `.catch()` blocks
+* Swallowed promise rejections
+
+Example:
+
+```
+❌ Error swallowed in .catch()
+```
+
+---
+
+### Async Boundary Enforcement
+
+Flags:
+
+```
+async function foo() {
+  await fetchData();
+}
+```
+
+If no `try/catch` boundary exists:
+
+```
+⚠️ Async function contains await but has no error boundary
+```
+
+---
+
+### Interprocedural Async Propagation
+
+If:
+
+```
+A calls B
+B returns a promise
+A does not await B
+```
+
+Then:
+
+```
+A is async-unsafe
+```
+
+Callograph propagates async risk across the call graph.
+
+---
+
+### Severity Model
+
+Async issues are categorized:
+
+* `error`
+* `warning`
+* `info`
+
+You can configure thresholds:
+
+```
+--async-severity=warning
+--fail-on-async
+```
+
+---
+
+## 5. CI Integration
+
+Callograph supports CI enforcement:
+
+```
+callograph analyze --fail-on-impure
+callograph analyze --fail-on-async
+```
+
+You can enforce architectural constraints in pipelines.
+
+---
+
+## 6. JSON Output Mode
+
+Structured JSON output for automation:
+
+```
+callograph analyze --json
+```
+
+Useful for:
+
+* CI dashboards
+* Custom reporting
+* PR bots
+* IDE integrations
+
+---
+
+## 7. Smart Ignore System
+
+Callograph automatically:
+
+* Ignores `node_modules`
+* Detects and ignores its own source when analyzing itself
+
+You can manually ignore paths:
+
+```
+--ignore=src/generated,dist
+```
+
+---
+
+# CLI Usage
+
+Analyze project:
+
+```
+callograph analyze
+```
+
+Custom tsconfig:
+
+```
+callograph analyze tsconfig.build.json
+```
+
+Fail on impurity:
 
 ```
 callograph analyze --fail-on-impure
 ```
 
-This allows enforcement of architectural constraints.
+Fail on async violations:
 
----
-
-## Installation
-
-```bash
-npm install --save-dev callograph
+```
+callograph analyze --fail-on-async
 ```
 
-Or use directly:
+Adjust async severity threshold:
 
-```bash
-npx callograph analyze
 ```
-
----
-
-## Usage
-
-Analyze project based on `tsconfig.json`:
-
-```bash
-callograph analyze
+callograph analyze --async-severity=warning
 ```
 
 JSON output:
 
-```bash
+```
 callograph analyze --json
-```
-
-Fail CI if impurity detected:
-
-```bash
-callograph analyze --fail-on-impure
-```
-
-Export DOT graph:
-
-```bash
-callograph analyze --dot
 ```
 
 ---
 
-## Architecture
+# Architecture
 
-Callograph uses:
-
-* TypeScript Compiler API
-* Program-level symbol resolution
-* TypeChecker-based call resolution
-* AST traversal via `ts.forEachChild`
-* Impurity propagation via call graph traversal
-
-Pipeline:
+Callograph pipeline:
 
 ```
 Load tsconfig
 ↓
-Create Program
+Create TypeScript Program
 ↓
-Extract function symbols
+Collect function declarations (ignore-aware)
 ↓
-Build call graph
+Build call graph (TypeChecker-based resolution)
 ↓
-Detect side effects
+Purity analysis
 ↓
-Propagate impurity
+Impurity propagation
 ↓
-Report results
+Async flow analysis
+↓
+Async return propagation
+↓
+Async risk propagation
+↓
+Severity filtering
+↓
+Report (Text or JSON)
 ```
 
 ---
 
-## Design Philosophy
+# Design Philosophy
 
-Callograph does not attempt perfect purity inference.
-It aims to provide practical, high-signal diagnostics with minimal noise.
+Callograph is designed for:
 
-It prioritizes:
-
-* Deterministic analysis
-* CI compatibility
-* Clear reasoning in output
+* Structural clarity
+* Deterministic reasoning
 * Minimal false positives
-* Performance (<2s on mid-sized codebases)
+* Interprocedural analysis
+* CI enforcement
+* Performance on mid-sized codebases
+
+It does not aim for perfect theoretical purity inference.
+
+It aims for high-signal architectural diagnostics.
 
 ---
 
-## Limitations (v0.0.8)
+# Current Limitations
 
-* Dynamic runtime dispatch cannot always be resolved.
-* Higher-order functions are partially supported.
-* Deep framework-specific analysis is not included.
-* No IDE integration yet.
+* Dynamic runtime dispatch cannot always be resolved
+* Higher-order functional inference is partial
+* No race-condition modeling (sync/async timing hazards)
+* No async escape-boundary graph modeling yet
+* No IDE plugin yet
 
 ---
 
-## Roadmap
+# Roadmap
 
+Planned enhancements:
+
+* DOT graph export
+* Circular dependency detection
 * Shared mutable singleton detection
 * Closure-captured state analysis
-* Circular call detection
-* Effect scoring per module
-* Interactive HTML graph visualization
+* Module-level effect scoring
+* Async escape-boundary modeling
+* Mixed sync/async race detection
+* HTML graph visualization
 * GitHub PR comment bot
-* Monorepo support with project references
+* Monorepo project reference support
 
 ---
 
-## License
+# Versioning
 
-MIT
+The current release introduces:
+
+* Dedicated async engine
+* Interprocedural async propagation
+* Severity modeling
+* JSON output
+* Smart ignore system
+* Enterprise boundary detection
+
+Callograph is evolving toward a structural effect analysis engine for TypeScript.
 
 ---
 
-## Contributing
-
-Contributions are welcome.
-
-* Open an issue to discuss architecture changes.
-* Keep changes deterministic and type-safe.
-* Add tests for new analysis rules.
-
----
- 
-## Vision
+# Vision
 
 Callograph aims to become:
 
-> A structural analysis tool that gives engineers clarity over side effects, purity, and call relationships in large TypeScript systems.
+> A structural analysis engine that provides deep visibility into side effects, purity, async safety, and architectural boundaries in large TypeScript systems.
 
 ---
