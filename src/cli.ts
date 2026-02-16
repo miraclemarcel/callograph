@@ -1,37 +1,71 @@
 #!/usr/bin/env node
 
-import { createTsProgram } from "./analyzer/createProgram";
-import { collectFunctions } from "./analyzer/collectFunctions";
-import { buildCallGraph } from "./analyzer/buildCallGraph";
-import { analyzePurity } from "./analyzer/purity";
-import { propagateImpurity } from "./analyzer/propagateImpurity";
+import { createTsProgram } from "./analyzer/core/createProgram";
+import { collectFunctions } from "./analyzer/core/collectFunctions";
+import { buildCallGraph } from "./analyzer/core/buildCallGraph";
+import { analyzePurity } from "./analyzer/purity/analyzePurity";
+import { propagateImpurity } from "./analyzer/purity/propagateImpurity";
+import { analyzeAsync } from "./analyzer/async/analyzeAsync";
+import { propagateAsyncReturns } from "./analyzer/async/propagateAsyncReturns";
+import { propagateAsyncRisk } from "./analyzer/async/propagateAsync";
+import { AsyncSeverity } from "./../libs/types";
 
 const args = process.argv.slice(2);
 const command = args[0];
 
 if (command !== "analyze") {
-  console.log("Usage: callograph analyze [tsconfigPath] [--fail-on-impure]");
+  console.log(
+    "Usage: callograph analyze [tsconfigPath] [--fail-on-impure] [--fail-on-async] [--async-severity=error|warning|info]"
+  );
   process.exit(1);
 }
 
-const configPath = args[1] && !args[1].startsWith("--")
-  ? args[1]
-  : "tsconfig.json";
+const configPath =
+  args[1] && !args[1].startsWith("--")
+    ? args[1]
+    : "tsconfig.json";
 
 const failOnImpure = args.includes("--fail-on-impure");
+const failOnAsync = args.includes("--fail-on-async");
+
+const severityArg = args.find(a =>
+  a.startsWith("--async-severity=")
+);
+
+const severityThreshold: AsyncSeverity =
+  (severityArg?.split("=")[1] as AsyncSeverity) ?? "error";
+
+const severityRank: Record<AsyncSeverity, number> = {
+  error: 3,
+  warning: 2,
+  info: 1,
+};
 
 const program = createTsProgram(configPath);
 const functions = collectFunctions(program);
 const graph = buildCallGraph(program, functions);
 
+/* ==============================
+   PURITY
+============================== */
+
 let purity = analyzePurity(program, functions);
 purity = propagateImpurity(graph, purity);
 
+/* ==============================
+   ASYNC
+============================== */
+
+let asyncResults = analyzeAsync(program, functions);
+asyncResults = propagateAsyncReturns(graph, asyncResults);
+asyncResults = propagateAsyncRisk(graph, asyncResults);
+
 const functionMap = new Map(functions.map(f => [f.id, f]));
 
-/* ------------------------------
+/* ==============================
    CALL GRAPH
---------------------------------*/
+============================== */
+
 console.log("\nCall Graph:\n");
 
 let edgeCount = 0;
@@ -55,9 +89,10 @@ if (edgeCount === 0) {
 
 console.log(`\nTotal call edges: ${edgeCount}`);
 
-/* ------------------------------
+/* ==============================
    PURITY REPORT
---------------------------------*/
+============================== */
+
 console.log("\nPurity Report:\n");
 
 const impure = purity.filter(r => !r.isPure);
@@ -78,5 +113,43 @@ if (impure.length === 0) {
 }
 
 if (failOnImpure && impure.length > 0) {
+  process.exit(1);
+}
+
+/* ==============================
+   ASYNC REPORT
+============================== */
+
+console.log("\nAsync Safety Report:\n");
+
+const filteredAsync = asyncResults.filter(r =>
+  r.issues.some(
+    issue =>
+      severityRank[issue.severity] >=
+      severityRank[severityThreshold]
+  )
+);
+
+if (filteredAsync.length === 0) {
+  console.log("No async issues detected.");
+} else {
+  for (const r of filteredAsync) {
+    console.log(`${r.file}:${r.line}:${r.character}`);
+    console.log(`Function: ${r.name}`);
+    for (const issue of r.issues) {
+      if (
+        severityRank[issue.severity] >=
+        severityRank[severityThreshold]
+      ) {
+        console.log(
+          `  [${issue.severity.toUpperCase()}] ${issue.message}`
+        );
+      }
+    }
+    console.log("");
+  }
+}
+
+if (failOnAsync && filteredAsync.length > 0) {
   process.exit(1);
 }

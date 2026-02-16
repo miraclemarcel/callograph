@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { FunctionNode } from "../../libs/types";
+import { FunctionNode } from "../../../libs/types";
 
 function safeName(node: ts.FunctionLikeDeclaration, sf: ts.SourceFile): string {
   const anyNode = node as any;

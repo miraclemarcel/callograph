@@ -1,16 +1,7 @@
 import ts from "typescript";
-import { FunctionNode, PurityResult } from "../../libs/types";
-import { GLOBAL_OBJECTS, MUTATING_ARRAY_METHODS } from "./helpers/globals";
-import { isInside, rootIdentifier, isWriteOperator } from "./helpers/ast";
-import { 
-  isPromiseLike,
-  isAwaited,
-  isReturned,
-  isHandledWithThen,
-  isAsyncForEach,
-  isAsyncEventListener,
-  isPromiseAll,
-} from "./helpers/async";
+import { FunctionNode, PurityResult } from "../../../libs/types";
+import { GLOBAL_OBJECTS, MUTATING_ARRAY_METHODS } from "../shared/global";
+import { isInside, rootIdentifier, isWriteOperator } from "../shared/ast";
 
 export function analyzePurity(
   program: ts.Program,
@@ -29,18 +20,16 @@ export function analyzePurity(
     const paramNames = new Set<string>();
 
     for (const p of fn.node.parameters) {
-      if (ts.isIdentifier(p.name)) paramNames.add(p.name.text);
+      if (ts.isIdentifier(p.name)) {
+        paramNames.add(p.name.text);
+      }
     }
 
     const mark = (reason: string) => {
-      if (!reasons.includes(reason)) reasons.push(reason);
+      if (!reasons.includes(reason)) {
+        reasons.push(reason);
+      }
     };
-
-    let containsAwait = false;
-    let hasTryCatch = false;
-
-    const isAsyncFunction =
-      fn.node.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
 
     function visit(node: ts.Node): void {
       /* ---------------------------
@@ -58,6 +47,7 @@ export function analyzePurity(
           const sym = checker.getSymbolAtLocation(left);
           const decls = sym?.getDeclarations() ?? [];
           const declaredInside = decls.some(d => isInside(d, fn.node));
+
           if (sym && decls.length > 0 && !declaredInside) {
             mark(`Writes to outer scope \`${left.text}\``);
           }
@@ -109,10 +99,8 @@ export function analyzePurity(
          CALL EXPRESSIONS
       ----------------------------*/
       if (ts.isCallExpression(node)) {
-        const type = checker.getTypeAtLocation(node);
         const expr = node.expression;
 
-        // Non-deterministic
         if (
           ts.isPropertyAccessExpression(expr) &&
           ts.isIdentifier(expr.expression) &&
@@ -130,47 +118,23 @@ export function analyzePurity(
         ) {
           mark("Calls Math.random() (non-deterministic)");
         }
-
-        // Async rules
-        if (isPromiseLike(type, checker)) {
-          if (!isAwaited(node) && !isReturned(node) && !isHandledWithThen(node)) {
-            mark("Floating Promise (result ignored)");
-          }
-        }
-
-        if (isPromiseAll(node) && !isAwaited(node) && !isReturned(node)) {
-          mark("Unawaited Promise.all()");
-        }
-
-        if (isAsyncForEach(node)) {
-          mark("Async callback inside forEach (not awaited)");
-        }
-
-        if (isAsyncEventListener(node)) {
-          mark("Async event listener without error boundary");
-        }
       }
 
       /* ---------------------------
          NEW EXPRESSIONS
       ----------------------------*/
       if (ts.isNewExpression(node)) {
-        if (ts.isIdentifier(node.expression) && node.expression.text === "Date") {
+        if (
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === "Date"
+        ) {
           mark("Instantiates Date (non-deterministic)");
         }
       }
 
       /* ---------------------------
-         AWAIT + ERROR HANDLING
+         ERROR SWALLOWING
       ----------------------------*/
-      if (ts.isAwaitExpression(node)) {
-        containsAwait = true;
-      }
-
-      if (ts.isTryStatement(node) && node.catchClause) {
-        hasTryCatch = true;
-      }
-
       if (ts.isCatchClause(node) && node.block.statements.length === 0) {
         mark("Empty catch block (error swallowed)");
       }
@@ -179,14 +143,6 @@ export function analyzePurity(
     }
 
     visit(fn.node);
-
-    if (isAsyncFunction && !containsAwait) {
-      mark("Async function without await");
-    }
-
-    if (isAsyncFunction && containsAwait && !hasTryCatch) {
-      mark("Async function without error handling (no try/catch)");
-    }
 
     results.push({
       id: fn.id,
