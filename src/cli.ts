@@ -9,7 +9,8 @@ import { propagateImpurity } from "./analyzer/purity/propagateImpurity";
 import { analyzeAsync } from "./analyzer/async/analyzeAsync";
 import { propagateAsyncReturns } from "./analyzer/async/propagateAsyncReturns";
 import { propagateAsyncRisk } from "./analyzer/async/propagateAsync";
-import { AsyncSeverity } from "../libs/types";
+import { AsyncSeverity, AsyncIssue} from "../libs/types";
+
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -187,6 +188,39 @@ if (failOnImpure && impure.length > 0) {
   process.exit(1);
 }
 
+
+
+function groupIssues(issues: AsyncIssue[]) {
+  const map = new Map<
+    string,
+    { severity: AsyncSeverity; count: number }
+  >();
+
+  for (const issue of issues) {
+    const key = `${issue.severity}|${issue.message}`;
+
+    if (!map.has(key)) {
+      map.set(key, {
+        severity: issue.severity,
+        count: 1,
+      });
+    } else {
+      map.get(key)!.count++;
+    }
+  }
+
+  return Array.from(map.entries()).map(([key, value]) => {
+    const [, message] = key.split("|");
+    return {
+      message,
+      severity: value.severity,
+      count: value.count,
+    };
+  });
+}
+
+
+
 /* =============================
    ASYNC REPORT
 ============================= */
@@ -205,19 +239,27 @@ if (filteredAsync.length === 0) {
   for (const r of filteredAsync) {
     console.log(`${r.file}:${r.line}:${r.character}`);
     console.log(`Function: ${r.name}`);
-    for (const issue of r.issues) {
+
+    const grouped = groupIssues(r.issues);
+
+    for (const issue of grouped) {
       if (
         severityRank[issue.severity] >=
         severityRank[severityThreshold]
       ) {
+        const suffix =
+          issue.count > 1 ? ` (${issue.count} occurrences)` : "";
+
         console.log(
-          `  [${issue.severity.toUpperCase()}] ${issue.message}`
+          `  [${issue.severity.toUpperCase()}] ${issue.message}${suffix}`
         );
       }
     }
+
     console.log("");
   }
 }
+
 
 if (failOnAsync && filteredAsync.length > 0) {
   process.exit(1);
