@@ -27,7 +27,7 @@ It provides structural reasoning about your system.
 
 ---
 
-# Core Capabilities (v0.0.9)
+# Core Capabilities (v1.0.0)
 
 ---
 
