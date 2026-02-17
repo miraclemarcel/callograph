@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { FunctionNode } from "../../libs/types";
+import { FunctionNode } from "../../../libs/types";
 
 // callerId -> calleeIds
 export type CallGraph = Map<string, Set<string>>;

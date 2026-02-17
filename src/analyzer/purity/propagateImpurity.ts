@@ -1,5 +1,5 @@
-import { CallGraph } from "./buildCallGraph";
-import { PurityResult } from "../../libs/types";
+import { CallGraph } from "../../analyzer/core/buildCallGraph";
+import { PurityResult } from "../../../libs/types";
 
 export function propagateImpurity(
   graph: CallGraph,
